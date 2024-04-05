@@ -1,6 +1,7 @@
 import { useContext } from "react"
 import { Login, Register } from "./components"
 import { AuthContext } from './context/authContext';
+import MapPage from "./pages/MapPage";
 
 const App = () => {
 
@@ -13,7 +14,7 @@ const App = () => {
       <h1><b>Projeto TCC com</b> <span>Firebase</span> <b>e</b> <span>React</span></h1>
       {
         (status === 'authenticated' && userId)
-          ? <HomePage />
+          ? <MapPage />
           : <AuthPage />
       }
     </main>
