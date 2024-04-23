@@ -4,16 +4,25 @@ import {
 } from 'firebase/auth'
 import { AuthStateContext } from '../context/authContext'
 import { FirebaseAuth } from './config'
+import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
+
+
 
 const googleProvider = new GoogleAuthProvider()
+
 
 export const singInWithGoogle = async () => {
     try {
         const result = await signInWithPopup(FirebaseAuth, googleProvider)
 
-        const { displayName, email, photoURL, uid } = result.user
+        const { uid, displayName, email } = result.user
 
-        return uid
+        // displayName is the name of the user
+        const name = displayName;
+        // email is the email of the user
+        const userEmail = email;
+        
+        return { uid, name, userEmail }
 
     } catch (e) {
         alert((e as Error).message)
@@ -52,16 +61,22 @@ export const loginWithCredentials = async ({ email, password }: PropsRegister) =
     }
 }
 
-
-type StateDispatch = React.Dispatch<React.SetStateAction<Pick<AuthStateContext, "status" | "userId">>>
+//essa variavel é responsável por fazer a verificação e salvar depois os dados no firestore 
+type StateDispatch = React.Dispatch<React.SetStateAction<Pick<AuthStateContext, "status" | "userId" | "userEmail" | "userName">>>
 
 export const onAuthStateHasChanged = (setSession: StateDispatch) => {
-    onAuthStateChanged(FirebaseAuth, user => {
+    onAuthStateChanged(FirebaseAuth, async user => {
+        if (!user) return setSession({ status: 'no-authenticated', userId: null, userEmail: null, userName: null})
 
-        if (!user) return setSession({ status: 'no-authenticated', userId: null })
-
-        setSession({ status: 'authenticated', userId: user!.uid })
-    })
+    //Aqui é onde você salva os dados no Firestore
+    const db = getFirestore();
+    const docRef = doc(db, "users", user.uid);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      const { imageUrl, name, email } = docSnap.data();
+      setSession({ status: 'authenticated', userId: user.uid, userEmail: email, userName: name})
+    }
+  })
 }
 
 export const logoutFirebase = async () => await FirebaseAuth.signOut()

@@ -1,11 +1,12 @@
 import { useForm } from '../hooks/useForm';
-import { useContext } from 'react';
+import { useContext} from 'react';
 import { AuthContext } from '../context/authContext';
+import { singInWithGoogle } from '../firebase/providers'; // Import the functions
 
 export const Login = () => {
 
-    const { handleLoginWithGoogle, handleLoginWithCredentials } = useContext(AuthContext)
 
+    const { handleLoginWithCredentials } = useContext(AuthContext)
     const { handleChange, pass, email } = useForm({
         initialState: {
             email: 'test@test1.com',
@@ -17,6 +18,12 @@ export const Login = () => {
         e.preventDefault()
         handleLoginWithCredentials(pass, email)
     }
+
+
+    const handleLoginWithGoogle = async () => {
+        await singInWithGoogle(); // Fix the function name
+    };
+
 
     return (
         <div className="container-auth">
@@ -38,11 +45,13 @@ export const Login = () => {
                     value={pass}
                 />
 
+
                 <div className="container-buttons">
                     <button type="submit">Log In</button>
                     <button type="button" onClick={handleLoginWithGoogle}> Google </button>
                 </div>
+
             </form>
         </div>
     )
-}
+};

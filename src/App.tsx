@@ -1,7 +1,7 @@
 import { useContext } from "react"
 import { Login, Register } from "./components"
 import { AuthContext } from './context/authContext';
-import MapPage from "./pages/MapPage";
+import { MapPage } from "./pages/MapPage";
 
 const App = () => {
 

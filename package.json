@@ -10,10 +10,22 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@azure/cognitiveservices-face": "^5.0.0",
+    "@azure/core-auth": "^1.7.2",
+    "@azure/ms-rest-js": "^2.7.0",
     "@react-google-maps/api": "^2.19.3",
+    "@types/react-modal": "^3.16.3",
+    "@types/react-webcam": "^3.0.0",
+    "axios": "^1.6.8",
+    "bootstrap": "^5.3.3",
     "firebase": "^10.10.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-bootstrap": "^2.10.2",
+    "react-dom": "^18.2.0",
+    "react-modal": "^3.16.1",
+    "react-webcam": "^7.2.0",
+    "sass": "^1.75.0",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.66",
