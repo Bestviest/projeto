@@ -8,4 +8,8 @@ export default defineConfig({
   [react(),
     VitePWA()
   ],
-})
+  server:{
+    port:3000
+  },
+  publicDir: 'public',
+});
