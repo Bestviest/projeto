@@ -12,9 +12,9 @@ import * as faceapi from 'face-api.js';
 import { ImageUrl } from "@azure/cognitiveservices-face/esm/models/mappers";
 import { FaceClient } from '@azure/cognitiveservices-face';
 import { ApiKeyCredentials } from '@azure/ms-rest-js';
-import { getStorage, ref, uploadString, getDownloadURL } from "firebase/storage";
+import { getStorage, ref, uploadString, getDownloadURL, uploadBytesResumable, uploadBytes } from "firebase/storage";
 import axios from 'axios'; 
-
+import { v4 as uuidv4 } from 'uuid';
 
 export const MapPage = () => {
 
@@ -36,37 +36,41 @@ export const MapPage = () => {
   const handleShow = () => setShowModal(true);
   const [modalIsOpen, setModalIsOpen] = useState(false);
   const [modelsLoaded, setModelsLoaded] = useState(false);
-
-  
   const [isInsidePolygon, setIsInsidePolygon] = useState(false);
  
+  const base64ToBlob = (base64: string) => {
+    const parts = base64.split(';base64,');
+    const contentType = parts[0].split(':')[1];
+    const raw = window.atob(parts[1]);
+    const rawLength = raw.length;
+    const uInt8Array = new Uint8Array(rawLength);
+
+    for (let i = 0; i < rawLength; ++i) {
+      uInt8Array[i] = raw.charCodeAt(i);
+    }
+
+    return new Blob([uInt8Array], { type: contentType });
+  };
 
   const loadModels = async () => {
-    const MODEL_URL = '/public/models';
     try {
-      const response = await fetch(MODEL_URL);
-      if (response.headers?.get('content-type')?.includes('application/json')) {
-        const models = await response.json();
-        return Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(models.tinyFaceDetector),
-          faceapi.nets.faceLandmark68Net.loadFromUri(models.faceLandmark68Net),
-          faceapi.nets.faceRecognitionNet.loadFromUri(models.faceRecognitionNet),
-          faceapi.nets.faceExpressionNet.loadFromUri(models.faceExpressionNet),
-          faceapi.nets.ssdMobilenetv1.loadFromUri(models.ssdMobilenetv1) 
-        ]);
-      } else {
-        throw new Error('A resposta não é um JSON válido');
-      }
+      const MODEL_URL = '/models';
+      const response = await fetch(MODEL_URL + '/ssd_mobilenetv1_model-weights_manifest.json');
+      console.log('Resposta do servidor para ssd_mobilenetv1:', await response.text());
+  
+      await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL);
+      await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+      await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+      console.log('Modelos carregados com sucesso');
     } catch (error) {
       console.error('Erro ao carregar os modelos:', error);
     }
   };
-  
   // ...
   
-  loadModels().then(() => {
-    handleFaceRecognition();
-  });
+  useEffect(() => {
+    loadModels();
+  }, []);
 
 
    
@@ -77,6 +81,8 @@ export const MapPage = () => {
   
   // const faceclient = new FaceClient(new ApiKeyCredentials({ inHeader: { 'Ocp-Apim-Subscription-Key': key } }), endpoint);
   
+
+
   const capture = async () => {
     const imageSrc = webcamRef.current?.getScreenshot();
     if (imageSrc) {
@@ -85,16 +91,24 @@ export const MapPage = () => {
       if (user) {
         const storage = getStorage();
         const storageRef = ref(storage, `images/${user.uid}`);
-        await uploadString(storageRef, imageSrc, 'data_url');
+        const imageBlob = await base64ToBlob(imageSrc); // Convertendo a imagem para Blob
+        await uploadBytes(storageRef, imageBlob); // Fazendo upload do Blob para o Firebase Storage
         const imageUrl = await getDownloadURL(storageRef);
   
+        // Salvando a URL da imagem no Firestore
         await setDoc(doc(firestore, 'users', user.uid), {
           imageUrl: imageUrl,
           userId: user.uid,
           userEmail: user.email,
           userName: user.displayName, 
         });
-        
+  
+        // Fazendo o download da imagem
+        const link = document.createElement('a');
+        link.href = imageUrl;
+        link.download = 'image.png';
+        link.click();
+  
         handleClose();
         setImageSaved(imageSrc); // Marca a imagem como salva
         setIsFirstCapture(false); // Marca que a primeira foto foi capturada
@@ -102,14 +116,28 @@ export const MapPage = () => {
       }
     }
   };
+
+
+
+
+
+
+
+
+
   // const capture = async () => {
   //   const imageSrc = webcamRef.current?.getScreenshot();
   //   if (imageSrc) {
   //     const auth = getAuth();
   //     const user = auth.currentUser;
   //     if (user) {
+  //       const storage = getStorage();
+  //       const storageRef = ref(storage, `images/${user.uid}`);
+  //       await uploadString(storageRef, imageSrc, 'data_url');
+  //       const imageUrl = await getDownloadURL(storageRef);
+  
   //       await setDoc(doc(firestore, 'users', user.uid), {
-  //         imageUrl: imageSrc,
+  //         imageUrl: imageUrl,
   //         userId: user.uid,
   //         userEmail: user.email,
   //         userName: user.displayName, 
@@ -119,10 +147,10 @@ export const MapPage = () => {
   //       setImageSaved(imageSrc); // Marca a imagem como salva
   //       setIsFirstCapture(false); // Marca que a primeira foto foi capturada
   //       localStorage.setItem('isFirstCapture', 'false'); // Armazena o valor no localStorage
-           
   //     }
   //   }
   // };
+ 
 
  
 
@@ -135,143 +163,78 @@ export const MapPage = () => {
     setModalIsOpen(true);
   };
 
-  const handleFaceRecognition = async () => {
-    
-   
-    if (!modelsLoaded) {
-      console.error('Os modelos do face-api.js ainda não foram carregados');
-      return;
-    }
+  
+const handleFaceRecognition = async () => {
+  const webcam = webcamRef.current;
+  if (!webcam) {
+    console.error('Webcam não disponível');
+    return;
+  }
 
-    const webcam = webcamRef.current;
-    if (!webcam) {
-      console.error('Webcam não disponível');
-      return;
-    }
+const imageSrc = webcam.getScreenshot();
+if (!imageSrc) {
+  console.error('Não foi possível obter a imagem da webcam');
+  return;
+}
 
-    const imageSrc = webcam.getScreenshot();
-    if (!imageSrc) {
-      console.error('Não foi possível obter a imagem da webcam');
-      return;
-    }
 
-    const storage = getStorage();
-    const auth = getAuth();
-    const user = auth.currentUser;
-    if (user) {
-      const docSnap = await getDoc(doc(db, 'users', user.uid));
-      if (docSnap.exists()) {
-        const userData = docSnap.data();
-        if (userData && userData.imageUrl) {
-          const savedImageUrl = userData.imageUrl;
+  const imageBlob = await base64ToBlob(imageSrc);
+  const storage = getStorage();
+  const auth = getAuth();
+  const user = auth.currentUser;
+  
+  if (user) {
+    const docSnap = await getDoc(doc(firestore, 'users', user.uid));
+    if (docSnap.exists()) {
+      const userData = docSnap.data();
+      if (userData) {
+        const savedImageUrl = userData.ImageUrl; // Obtenha a URL da imagem salva
 
-          // Upload da nova imagem para o Firebase Storage
-          const timestamp = Date.now();
-          const storageRef = ref(storage, `images/${timestamp}`);
-          const snapshot = await uploadString(storageRef, imageSrc, 'data_url');
-          const currentImageUrl = await getDownloadURL(snapshot.ref);
+        // Upload da nova imagem para o Firebase Storage
+        const timestamp = Date.now();
+        const storageRef = ref(storage, `images/${timestamp}/${uuidv4()}/${user.uid}`);
+        const snapshot = await uploadBytesResumable(storageRef, imageBlob);
+        const currentImageUrl = await getDownloadURL(snapshot.ref);
 
-          // Salvar a URL da nova imagem no Firestore
-          await setDoc(doc(db, 'users', user.uid), {
-            ...userData,
-            imagemAtual: currentImageUrl,
-          });
+        // Salvar a URL da nova imagem no Firestore
+        await setDoc(doc(firestore, 'users', user.uid), {
+          ...userData,
+          imagemAtual: currentImageUrl,
+        });
 
-          // Usar face-api.js para comparar as imagens
-          const savedImg = await faceapi.fetchImage(savedImageUrl);
-          const newImg = await faceapi.fetchImage(currentImageUrl);
+        
 
-          const savedDetections = await faceapi.detectSingleFace(savedImg).withFaceLandmarks().withFaceDescriptor();
-          const newDetections = await faceapi.detectSingleFace(newImg).withFaceLandmarks().withFaceDescriptor();
+        const savedImg = await faceapi.fetchImage(savedImageUrl);
+        const newImg = await faceapi.fetchImage(currentImageUrl);
 
-          if (savedDetections && newDetections) {
-            const dist = faceapi.euclideanDistance(savedDetections.descriptor, newDetections.descriptor);
-            if (dist < 0.6) {
-              const recognitionTime = new Date();
-              const userName = user.displayName;
 
-              try {
-                await setDoc(doc(db, 'recognitions', user.uid), {
-                  recognitionTime: recognitionTime,
-                  userName: userName,
-                });
-                console.log('Dados salvos com sucesso no Firestore');
-              } catch (error) {
-                console.error('Erro ao salvar dados no Firestore:', error);
-              }
-            } else {
-              console.error('Os rostos não são idênticos');
+
+        const savedDetections = await faceapi.detectSingleFace(savedImg).withFaceLandmarks().withFaceDescriptor();
+        const newDetections = await faceapi.detectSingleFace(newImg).withFaceLandmarks().withFaceDescriptor();
+
+        if (savedDetections && newDetections) {
+          const dist = faceapi.euclideanDistance(savedDetections.descriptor, newDetections.descriptor);
+          if (dist < 0.6) { // Este é um limite de exemplo, você pode precisar ajustá-lo para o seu caso
+            const recognitionTime = new Date();
+            const userName = user.displayName;
+
+            try {
+              await setDoc(doc(firestore, 'recognitions', user.uid), {
+                recognitionTime: recognitionTime,
+                userName: userName,
+              });
+              console.log('Dados salvos com sucesso no Firestore');
+            } catch (error) {
+              console.error('Erro ao salvar dados no Firestore:', error);
             }
+          } else {
+            console.error('Os rostos não são idênticos');
           }
         }
       }
     }
-  };
-
-// const handleFaceRecognition = async () => {
-//   const webcam = webcamRef.current;
-//   if (!webcam) {
-//     console.error('Webcam não disponível');
-//     return;
-//   }
-
-//   const imageSrc = webcam.getScreenshot();
-//   if (!imageSrc) {
-//     console.error('Não foi possível obter a imagem da webcam');
-//     return;
-//   }
-//   const storage = getStorage();
-//   const auth = getAuth();
-//   const user = auth.currentUser;
-//   if (user) {
-    
-//     const docSnap = await getDoc(doc(firestore, 'users', user.uid));
-//     if (docSnap.exists()) {
-//       const userData = docSnap.data();
-//       if (userData) {
-//         const savedImageUrl = userData.ImageUrl; // Obtenha a URL da imagem salva
-
-//         // Upload da nova imagem para o Firebase Storage
-//         const timestamp = Date.now();
-//         const storageRef = ref(storage, `images/${timestamp}`);
-//         const snapshot = await uploadString(storageRef, imageSrc, 'data_url');
-//         const currentImageUrl = await getDownloadURL(snapshot.ref);
-
-//         // Salvar a URL da nova imagem no Firestore
-//         await setDoc(doc(firestore, 'users', user.uid), {
-//           ...userData,
-//           imagemAtual: currentImageUrl,
-//         });
-
-//         const savedImg = await faceapi.fetchImage(savedImageUrl);
-//         const newImg = await faceapi.fetchImage(imageSrc);
-
-//         const savedDetections = await faceapi.detectSingleFace(savedImg).withFaceLandmarks().withFaceDescriptor();
-//         const newDetections = await faceapi.detectSingleFace(newImg).withFaceLandmarks().withFaceDescriptor();
-
-//         if (savedDetections && newDetections) {
-//           const dist = faceapi.euclideanDistance(savedDetections.descriptor, newDetections.descriptor);
-//           if (dist < 0.6) { // Este é um limite de exemplo, você pode precisar ajustá-lo para o seu caso
-//             const recognitionTime = new Date();
-//             const userName = user.displayName;
-
-//             try {
-//               await setDoc(doc(firestore, 'recognitions', user.uid), {
-//                 recognitionTime: recognitionTime,
-//                 userName: userName,
-//               });
-//               console.log('Dados salvos com sucesso no Firestore');
-//             } catch (error) {
-//               console.error('Erro ao salvar dados no Firestore:', error);
-//             }
-//           } else {
-//             console.error('Os rostos não são idênticos');
-//           }
-//         }
-//       }
-//     }
-//   }
-// };
+  }
+};
 
   // const handleFaceRecognition = async () => {
   //   const webcam = webcamRef.current;
@@ -508,4 +471,3 @@ export const MapPage = () => {
         </div>
       );
     };
-
