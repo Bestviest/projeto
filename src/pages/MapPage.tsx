@@ -38,6 +38,7 @@ export const MapPage = () => {
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [isInsidePolygon, setIsInsidePolygon] = useState(false);
  
+  //Converter o base64 para Blob
   const base64ToBlob = (base64: string) => {
     const parts = base64.split(';base64,');
     const contentType = parts[0].split(':')[1];
@@ -52,6 +53,8 @@ export const MapPage = () => {
     return new Blob([uInt8Array], { type: contentType });
   };
 
+
+  //carregar os modelos 
   const loadModels = async () => {
     try {
       const MODEL_URL = '/models';
@@ -59,7 +62,11 @@ export const MapPage = () => {
       console.log('Resposta do servidor para ssd_mobilenetv1:', await response.text());
   
       await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL);
-      await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+     console.log('Modelo ssdMobilenetv1 carregado com sucesso');
+    
+     await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+      console.log('Modelo faceLandmark68Net carregado com sucesso');
+    
       await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
       console.log('Modelos carregados com sucesso');
     } catch (error) {
@@ -90,7 +97,7 @@ export const MapPage = () => {
       const user = auth.currentUser;
       if (user) {
         const storage = getStorage();
-        const storageRef = ref(storage, `images/${user.uid}`);
+        const storageRef = ref(storage, `images/${user.uid}.jpg`);
         const imageBlob = await base64ToBlob(imageSrc); // Convertendo a imagem para Blob
         await uploadBytes(storageRef, imageBlob); // Fazendo upload do Blob para o Firebase Storage
         const imageUrl = await getDownloadURL(storageRef);
@@ -103,11 +110,6 @@ export const MapPage = () => {
           userName: user.displayName, 
         });
   
-        // Fazendo o download da imagem
-        const link = document.createElement('a');
-        link.href = imageUrl;
-        link.download = 'image.png';
-        link.click();
   
         handleClose();
         setImageSaved(imageSrc); // Marca a imagem como salva
@@ -164,77 +166,89 @@ export const MapPage = () => {
   };
 
   
-const handleFaceRecognition = async () => {
-  const webcam = webcamRef.current;
-  if (!webcam) {
-    console.error('Webcam não disponível');
-    return;
-  }
-
-const imageSrc = webcam.getScreenshot();
-if (!imageSrc) {
-  console.error('Não foi possível obter a imagem da webcam');
-  return;
-}
-
-
-  const imageBlob = await base64ToBlob(imageSrc);
-  const storage = getStorage();
-  const auth = getAuth();
-  const user = auth.currentUser;
+  const handleFaceRecognition = async () => {
+    const webcam = webcamRef.current;
+    if (!webcam) {
+      console.error('Webcam não disponível');
+      return;
+    }
   
-  if (user) {
-    const docSnap = await getDoc(doc(firestore, 'users', user.uid));
-    if (docSnap.exists()) {
-      const userData = docSnap.data();
-      if (userData) {
-        const savedImageUrl = userData.ImageUrl; // Obtenha a URL da imagem salva
+    const imageSrc = webcam.getScreenshot();
+    if (!imageSrc) {
+      console.error('Não foi possível obter a imagem da webcam');
+      return;
+    }
+  
+    const imageBlob = await base64ToBlob(imageSrc);
+  
+    const storage = getStorage();
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (user) {
+      const docSnap = await getDoc(doc(firestore, 'users', user.uid));
+      if (docSnap.exists()) {
+        const userData = docSnap.data();
+        if (userData) {
+          const savedImageUrl = userData.imageUrl;
+          if (!savedImageUrl) {
+            console.error('URL da imagem salva não está definida');
+            return;
+          }
+  
+          const timestamp = Date.now();
+          const storageRef = ref(storage, `images/${timestamp}/${uuidv4()}/${user.uid}.jpg`);
+          const snapshot = await uploadBytesResumable(storageRef, imageBlob);
+          const currentImageUrl = await getDownloadURL(snapshot.ref);
+          if (!currentImageUrl) {
+            console.error('URL da imagem atual não está definida');
+            return;
+          }
+  
+          await setDoc(doc(firestore, 'users', user.uid), {
+            ...userData,
+            imagemAtual: currentImageUrl,
+          });
+  
+          console.log(`Saved image URL: ${savedImageUrl}`);
+          console.log(`Current image URL: ${currentImageUrl}`);
 
-        // Upload da nova imagem para o Firebase Storage
-        const timestamp = Date.now();
-        const storageRef = ref(storage, `images/${timestamp}/${uuidv4()}/${user.uid}`);
-        const snapshot = await uploadBytesResumable(storageRef, imageBlob);
-        const currentImageUrl = await getDownloadURL(snapshot.ref);
-
-        // Salvar a URL da nova imagem no Firestore
-        await setDoc(doc(firestore, 'users', user.uid), {
-          ...userData,
-          imagemAtual: currentImageUrl,
-        });
-
-        
-
-        const savedImg = await faceapi.fetchImage(savedImageUrl);
-        const newImg = await faceapi.fetchImage(currentImageUrl);
-
-
-
-        const savedDetections = await faceapi.detectSingleFace(savedImg).withFaceLandmarks().withFaceDescriptor();
-        const newDetections = await faceapi.detectSingleFace(newImg).withFaceLandmarks().withFaceDescriptor();
-
-        if (savedDetections && newDetections) {
-          const dist = faceapi.euclideanDistance(savedDetections.descriptor, newDetections.descriptor);
-          if (dist < 0.6) { // Este é um limite de exemplo, você pode precisar ajustá-lo para o seu caso
-            const recognitionTime = new Date();
-            const userName = user.displayName;
-
-            try {
-              await setDoc(doc(firestore, 'recognitions', user.uid), {
-                recognitionTime: recognitionTime,
-                userName: userName,
-              });
-              console.log('Dados salvos com sucesso no Firestore');
-            } catch (error) {
-              console.error('Erro ao salvar dados no Firestore:', error);
+          if (!savedImageUrl || !currentImageUrl) {
+            console.error('URLs da imagem salva ou atual não estão definidas');
+            return;
+          }
+  
+          const savedImg = await faceapi.fetchImage(savedImageUrl);
+          const newImg = await faceapi.fetchImage(currentImageUrl);
+         
+  
+          const savedDetections = await faceapi.detectSingleFace(savedImg).withFaceLandmarks().withFaceDescriptor();
+          const newDetections = await faceapi.detectSingleFace(newImg).withFaceLandmarks().withFaceDescriptor();
+  
+          if (savedDetections && newDetections) {
+            const dist = faceapi.euclideanDistance(savedDetections.descriptor, newDetections.descriptor);
+            if (dist < 0.6) {
+              const recognitionTime = new Date();
+              const userName = user.displayName;
+  
+              try {
+                await setDoc(doc(firestore, 'recognitions', user.uid), {
+                  recognitionTime: recognitionTime,
+                  userName: userName,
+                });
+                console.log('Dados salvos com sucesso no Firestore');
+              } catch (error) {
+                console.error('Erro ao salvar os dados no Firestore:', error);
+              }
+            } else {
+              console.log('Reconhecimento facial falhou');
             }
           } else {
-            console.error('Os rostos não são idênticos');
+            console.log('Detecções não foram realizadas corretamente');
           }
         }
       }
     }
-  }
-};
+  };
 
   // const handleFaceRecognition = async () => {
   //   const webcam = webcamRef.current;
@@ -426,7 +440,7 @@ if (!imageSrc) {
           <button onClick={handleLogoutClick}>Logoff</button>
           <button onClick={handleNewCapture}>Capture New Photo</button>
          
-          <Button onClick={handleOpenModal}>Reconhecimento Facial</Button>
+          <Button disabled={!isInsidePolygon} onClick={handleOpenModal}>Reconhecimento Facial</Button>
           <Modal show={modalIsOpen} onHide={() => setModalIsOpen(false)}>
             <Modal.Header closeButton>
               <Modal.Title>Webcam Feed</Modal.Title>
@@ -449,7 +463,7 @@ if (!imageSrc) {
       
       
       
-            
+        
           {!isImageSaved && (
       <Modal show={showModal} onHide={handleClose}>
         <Modal.Header closeButton>
